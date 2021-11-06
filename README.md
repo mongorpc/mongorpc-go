@@ -6,6 +6,9 @@ A Go Client implementation of the MongoRPC with Synthetic Sugar Syntex.
 
 
 ```go
+// Initilize database
+db := client.Database("sample_mflix")
+
 // List Collections
 collections, err := db.ListCollectionNames(context.TODO())
 if err != nil {
