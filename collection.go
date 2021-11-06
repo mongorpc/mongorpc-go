@@ -1,24 +1,18 @@
 package mongorpcgo
 
-import (
-	"context"
+type Collection struct {
+	client *MongoRPCClient
+	name   string
+	parent *Database
+}
 
-	"github.com/mongorpc/mongorpc"
-	"github.com/mongorpc/mongorpc/proto"
-)
+// Initilize a new collection
+func (db *Database) Collection(name string) *Collection {
 
-func (c *MongoRPCClient) ListCollections(ctx context.Context, database string) ([]string, error) {
-	resp, err := c.mongorpc.ListCollections(ctx, &proto.ListCollectionsRequest{
-		Database: database,
-	})
-	if err != nil {
-		return nil, err
+	// Create a new collection
+	return &Collection{
+		name:   name,
+		client: db.client,
+		parent: db,
 	}
-
-	collections := []string{}
-	for _, value := range resp.Collections.Values {
-		collections = append(collections, mongorpc.DecodeValue(value).(string))
-	}
-
-	return collections, nil
 }

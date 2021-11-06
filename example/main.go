@@ -19,9 +19,20 @@ func main() {
 	}
 	defer conn.Close()
 
-	collections, err := client.ListCollections(context.TODO(), "sample_mflix")
+	// Initilize database
+	db := client.Database("sample_mflix")
+
+	// List Collections
+	collections, err := db.ListCollectionNames(context.TODO())
+	if err != nil {
+		logrus.Fatalln(err)
+	}
+	logrus.Println(collections)
+
+	// Get Document By ID
+	doc, err := db.Collection("movies").Document("573a13b0f29313caabd35231").Get(context.TODO())
 	if err != nil {
 		logrus.Errorln(err)
 	}
-	logrus.Infoln(collections)
+	logrus.Infoln(doc)
 }
