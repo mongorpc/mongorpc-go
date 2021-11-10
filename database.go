@@ -35,7 +35,7 @@ func (db *Database) ListCollectionNames(ctx context.Context) ([]string, error) {
 	// Decode the response
 	collections := []string{}
 	for _, value := range resp.Collections.Values {
-		collections = append(collections, mongorpc.DecodeValue(value).(string))
+		collections = append(collections, mongorpc.Decode(value).(string))
 	}
 
 	// Return the result

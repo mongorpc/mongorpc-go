@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	client := mongorpcgo.NewClient("localhost:27051")
+	client := mongorpcgo.NewClient("localhost:8080")
 	conn, err := client.Connect(
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
@@ -30,7 +30,7 @@ func main() {
 	logrus.Println(collections)
 
 	// Get Document By ID
-	doc, err := db.Collection("movies").Document("573a13b0f29313caabd35231").Get(context.TODO())
+	doc, err := db.Collection("movies").Document("573a1390f29313caabcd4135").Get(context.TODO())
 	if err != nil {
 		logrus.Errorln(err)
 	}

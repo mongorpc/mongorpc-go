@@ -41,6 +41,6 @@ func (doc *Document) Get(ctx context.Context) (interface{}, error) {
 	}
 
 	// decode mongorpc proto result to interface
-	result := mongorpc.DecodeValue(resp.Document)
+	result := mongorpc.Decode(resp.Document)
 	return result, nil
 }
