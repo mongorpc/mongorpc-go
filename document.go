@@ -44,3 +44,24 @@ func (doc *Document) Get(ctx context.Context) (interface{}, error) {
 	result := mongorpc.Decode(resp.Document)
 	return result, nil
 }
+
+// Delete returns the document with the given id.
+func (doc *Document) Delete(ctx context.Context) (interface{}, error) {
+
+	database := doc.parent.parent
+	collection := doc.parent
+
+	// crate mongorpc get document request
+	resp, err := doc.client.mongorpc.DeleteDocument(ctx, &proto.DeleteDocumentRequest{
+		Database:   database.name,
+		Collection: collection.name,
+		DocumentId: doc.documentID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// decode mongorpc proto result to interface
+	result := resp.DeletedCount
+	return result, nil
+}
