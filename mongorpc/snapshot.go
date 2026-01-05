@@ -162,3 +162,201 @@ func applyChangeEvent(docID string, event *ChangeEvent) *DocumentSnapshot {
 
 	return snapshot
 }
+
+// QuerySnapshot represents the current state of a query result.
+type QuerySnapshot struct {
+	// Documents contains all documents currently matching the query.
+	Documents []Document
+	// Count is the number of documents in the result.
+	Count int
+}
+
+// OnQuerySnapshotCallback is called when query results change.
+type OnQuerySnapshotCallback func(snapshot *QuerySnapshot, err error)
+
+// OnQuerySnapshot listens to real-time updates for a filtered query.
+// It first fetches documents matching the filter, then streams updates.
+// The callback is invoked:
+//   - Once immediately with the initial matching documents.
+//   - Whenever a document enters or leaves the result set.
+//
+// Note: Uses broad watch with client-side filtering for accuracy.
+// The function blocks until the context is cancelled or an error occurs.
+func (c *Collection) OnQuerySnapshot(ctx context.Context, filter Filter, callback OnQuerySnapshotCallback) error {
+	// Local state: map of ID -> Document for matching docs
+	state := make(map[string]Document)
+	var stateMu sync.Mutex
+
+	// Create a derived context for the watch goroutine
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	defer watchCancel()
+
+	// Buffer for events that arrive before initial fetch completes
+	eventBuffer := make([]*ChangeEvent, 0)
+	var bufferMu sync.Mutex
+	initialFetchDone := false
+
+	// Start watching the entire collection (broad watch)
+	eventChan, err := c.Watch(watchCtx, nil) // No pipeline filter
+	if err != nil {
+		callback(nil, err)
+		return err
+	}
+
+	// Goroutine to buffer events until initial fetch is done
+	go func() {
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case event, ok := <-eventChan:
+				if !ok {
+					return
+				}
+
+				bufferMu.Lock()
+				if !initialFetchDone {
+					eventBuffer = append(eventBuffer, event)
+					bufferMu.Unlock()
+				} else {
+					bufferMu.Unlock()
+					// Process event and update state
+					if processQueryEvent(event, filter, state, &stateMu) {
+						callback(buildQuerySnapshot(state, &stateMu), nil)
+					}
+				}
+			}
+		}
+	}()
+
+	// Perform initial fetch
+	docs, err := c.Find(ctx, filter)
+	if err != nil {
+		callback(nil, err)
+		return err
+	}
+
+	// Populate initial state
+	stateMu.Lock()
+	for _, doc := range docs {
+		if id, ok := doc["_id"].(string); ok {
+			state[id] = doc
+		}
+	}
+	stateMu.Unlock()
+
+	// Emit initial state
+	callback(buildQuerySnapshot(state, &stateMu), nil)
+
+	// Mark initial fetch as done and process buffered events
+	bufferMu.Lock()
+	initialFetchDone = true
+	bufferedEvents := make([]*ChangeEvent, len(eventBuffer))
+	copy(bufferedEvents, eventBuffer)
+	eventBuffer = nil
+	bufferMu.Unlock()
+
+	// Process buffered events
+	for _, event := range bufferedEvents {
+		if processQueryEvent(event, filter, state, &stateMu) {
+			callback(buildQuerySnapshot(state, &stateMu), nil)
+		}
+	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	return nil
+}
+
+// processQueryEvent processes a change event and updates the state map.
+// Returns true if the state changed (callback should be invoked).
+func processQueryEvent(event *ChangeEvent, filter Filter, state map[string]Document, mu *sync.Mutex) bool {
+	if event == nil {
+		return false
+	}
+
+	// Extract document ID
+	var docID string
+	if event.FullDocument != nil {
+		if id, ok := event.FullDocument["_id"].(string); ok {
+			docID = id
+		}
+	}
+	if docID == "" && event.DocumentKey != nil {
+		if id, ok := event.DocumentKey["_id"].(string); ok {
+			docID = id
+		}
+	}
+	if docID == "" {
+		return false
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	switch event.OperationType {
+	case "insert", "update", "replace":
+		if event.FullDocument != nil {
+			if matchesFilter(event.FullDocument, filter) {
+				// Document matches filter, add/update in state
+				state[docID] = event.FullDocument
+				return true
+			} else {
+				// Document doesn't match filter, remove if present
+				if _, exists := state[docID]; exists {
+					delete(state, docID)
+					return true
+				}
+			}
+		}
+	case "delete":
+		if _, exists := state[docID]; exists {
+			delete(state, docID)
+			return true
+		}
+	case "invalidate":
+		// Clear all state
+		for k := range state {
+			delete(state, k)
+		}
+		return true
+	}
+
+	return false
+}
+
+// matchesFilter checks if a document matches the given filter.
+// This is a simple implementation that checks for equality of top-level fields.
+func matchesFilter(doc Document, filter Filter) bool {
+	if len(filter) == 0 {
+		return true // Empty filter matches all
+	}
+
+	for key, filterValue := range filter {
+		docValue, exists := doc[key]
+		if !exists {
+			return false
+		}
+		// Simple equality check
+		if fmt.Sprintf("%v", docValue) != fmt.Sprintf("%v", filterValue) {
+			return false
+		}
+	}
+	return true
+}
+
+// buildQuerySnapshot creates a QuerySnapshot from the current state.
+func buildQuerySnapshot(state map[string]Document, mu *sync.Mutex) *QuerySnapshot {
+	mu.Lock()
+	defer mu.Unlock()
+
+	docs := make([]Document, 0, len(state))
+	for _, doc := range state {
+		docs = append(docs, doc)
+	}
+
+	return &QuerySnapshot{
+		Documents: docs,
+		Count:     len(docs),
+	}
+}
