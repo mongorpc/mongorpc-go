@@ -2,6 +2,7 @@ package mongorpc
 
 import (
 	"context"
+	"io"
 
 	pb "github.com/mongorpc/mongorpc-go/gen/mongorpc/v1"
 )
@@ -111,21 +112,13 @@ func (c *Collection) InsertMany(ctx context.Context, docs []Document) (*InsertMa
 		return nil, err
 	}
 
-	ids := make([]string, len(resp.InsertedIds))
+	insertedIDs := make([]string, len(resp.InsertedIds))
 	for i, id := range resp.InsertedIds {
-		ids[i] = id.Hex
-	}
-
-	var insertedCount int64
-	if resp.WriteResult != nil {
-		insertedCount = resp.WriteResult.InsertedCount
-	} else {
-		insertedCount = int64(len(ids))
+		insertedIDs[i] = id.Hex
 	}
 
 	return &InsertManyResult{
-		InsertedIDs:   ids,
-		InsertedCount: insertedCount,
+		InsertedIDs: insertedIDs,
 	}, nil
 }
 
@@ -141,9 +134,15 @@ func (c *Collection) UpdateByID(ctx context.Context, id string, update Update) (
 		return nil, err
 	}
 
+	var upsertedID string
+	if resp.WriteResult.UpsertedId != nil {
+		upsertedID = resp.WriteResult.UpsertedId.Hex
+	}
+
 	return &UpdateResult{
 		MatchedCount:  resp.WriteResult.MatchedCount,
 		ModifiedCount: resp.WriteResult.ModifiedCount,
+		UpsertedID:    upsertedID,
 	}, nil
 }
 
@@ -153,29 +152,12 @@ func (c *Collection) UpdateOne(ctx context.Context, filter Filter, update Update
 		return c.UpdateByID(ctx, id, update)
 	}
 
-	// Fallback to update many with limit 1? Or API supports limit?
-	// UpdateDocumentRequest has ID, not Filter. UpdateMany has Filter.
-	// The proto API seems to separate UpdateDocument (by ID) and UpdateMany (by filter).
-	// If FindOneAndUpdate exists in proto, we could use that, but that returns document.
-	// Let's see if there is UpdateOne in proto? Or maybe UpdateDocument supports filter?
-	// Checking mongorpc.pb.go: UpdateDocumentRequest has `id`.
-	// UpdateManyRequest has `filter` and `update`.
-
-	// If UpdateOne is needed by filter, we might need to find first then update, or use UpdateMany with some flag?
-	// Usually UpdateMany updates all matches.
-	// The proto definitions I saw:
-	// FindOneAndUpdate, FindOneAndReplace, FindOneAndDelete exist.
-
-	// Let's use FindOneAndUpdate for UpdateOne if we want atomic?
-	// Or maybe UpdateMany has a limit? (Not typical in mongo protocol for updates).
-
-	// For now, I'll assume UpdateOne needs to find the ID first.
 	doc, err := c.FindOne(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Handle _id extraction more robustly
 	id, _ := doc["_id"].(string)
+
 	return c.UpdateByID(ctx, id, update)
 }
 
@@ -191,9 +173,15 @@ func (c *Collection) UpdateMany(ctx context.Context, filter Filter, update Updat
 		return nil, err
 	}
 
+	var upsertedID string
+	if resp.WriteResult.UpsertedId != nil {
+		upsertedID = resp.WriteResult.UpsertedId.Hex
+	}
+
 	return &UpdateResult{
 		MatchedCount:  resp.WriteResult.MatchedCount,
 		ModifiedCount: resp.WriteResult.ModifiedCount,
+		UpsertedID:    upsertedID,
 	}, nil
 }
 
@@ -279,9 +267,43 @@ func (c *Collection) Distinct(ctx context.Context, field string, filter Filter) 
 
 // Aggregate runs an aggregation pipeline.
 func (c *Collection) Aggregate(ctx context.Context, pipeline []Document) ([]Document, error) {
-	// TODO: Convert pipeline to AggregationPipeline proto
-	// This requires mapping helpers for pipeline stages
-	return nil, nil
+	stages := make([]*pb.PipelineStage, len(pipeline))
+	for i, stage := range pipeline {
+		stages[i] = &pb.PipelineStage{
+			StageType: &pb.PipelineStage_Raw{
+				Raw: toProtoMapValue(stage),
+			},
+		}
+	}
+
+	req := &pb.AggregateRequest{
+		Pipeline: &pb.AggregationPipeline{
+			Database:   c.database.name,
+			Collection: c.name,
+			Stages:     stages,
+		},
+	}
+
+	stream, err := c.database.client.rpc.Aggregate(c.database.client.authContext(ctx), req)
+	if err != nil {
+		return nil, err
+	}
+
+	var documents []Document
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		if resp.Document != nil {
+			documents = append(documents, fromProtoDocument(resp.Document))
+		}
+	}
+
+	return documents, nil
 }
 
 // Query returns a fluent query builder.
