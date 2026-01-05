@@ -53,3 +53,19 @@ var (
 	ErrConnection   = errors.New("mongorpc: connection error")
 	ErrUnauthorized = errors.New("mongorpc: unauthorized")
 )
+
+// ChangeEvent represents a change stream event.
+type ChangeEvent struct {
+	ID            any      `json:"_id"`
+	OperationType string   `json:"operationType"`
+	FullDocument  Document `json:"fullDocument,omitempty"`
+	Namespace     Document `json:"ns,omitempty"`
+	DocumentKey   Document `json:"documentKey,omitempty"`
+}
+
+// ChangeStreamOptions configures the change stream.
+type ChangeStreamOptions struct {
+	FullDocument string // "default", "required", "updateLookup", "whenAvailable"
+	ResumeAfter  any
+	BatchSize    int32
+}

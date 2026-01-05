@@ -197,3 +197,44 @@ func toProtoMapValue(m map[string]any) *pb.MapValue {
 	}
 	return &pb.MapValue{Fields: fields}
 }
+
+// fromProtoChangeEvent converts a Proto ChangeEvent to a Go ChangeEvent.
+func fromProtoChangeEvent(event *pb.ChangeEvent) *ChangeEvent {
+	if event == nil {
+		return nil
+	}
+
+	changeEvent := &ChangeEvent{
+		OperationType: event.OperationType.String(),
+		FullDocument:  fromProtoDocument(event.FullDocument),
+		Namespace:     Document{"db": event.Database, "coll": event.Collection},
+	}
+
+	if event.DocumentKey != nil {
+		changeEvent.DocumentKey = Document{"_id": event.DocumentKey.Hex}
+		changeEvent.ID = Document{"_id": event.DocumentKey.Hex} // Approximate for now
+	}
+
+	// Map enum to simplified string if needed, or keep as is.
+	// Proto enum names like CHANGE_EVENT_TYPE_INSERT
+	switch event.OperationType {
+	case pb.ChangeEventType_INSERT:
+		changeEvent.OperationType = "insert"
+	case pb.ChangeEventType_UPDATE:
+		changeEvent.OperationType = "update"
+	case pb.ChangeEventType_REPLACE:
+		changeEvent.OperationType = "replace"
+	case pb.ChangeEventType_DELETE:
+		changeEvent.OperationType = "delete"
+	case pb.ChangeEventType_DROP:
+		changeEvent.OperationType = "drop"
+	case pb.ChangeEventType_RENAME:
+		changeEvent.OperationType = "rename"
+	case pb.ChangeEventType_DROP_DATABASE:
+		changeEvent.OperationType = "dropDatabase"
+	case pb.ChangeEventType_INVALIDATE:
+		changeEvent.OperationType = "invalidate"
+	}
+
+	return changeEvent
+}

@@ -306,6 +306,59 @@ func (c *Collection) Aggregate(ctx context.Context, pipeline []Document) ([]Docu
 	return documents, nil
 }
 
+// Watch watches the collection for changes.
+func (c *Collection) Watch(ctx context.Context, pipeline []Document, options ...ChangeStreamOptions) (<-chan *ChangeEvent, error) {
+	pbPipeline := make([]*pb.PipelineStage, len(pipeline))
+	for i, stage := range pipeline {
+		pbPipeline[i] = &pb.PipelineStage{
+			StageType: &pb.PipelineStage_Raw{
+				Raw: toProtoMapValue(stage),
+			},
+		}
+	}
+
+	req := &pb.WatchRequest{
+		Database:   c.database.name,
+		Collection: c.name,
+		Pipeline:   pbPipeline,
+	}
+
+	if len(options) > 0 {
+		opts := options[0]
+		req.Options = &pb.ChangeStreamOptions{
+			BatchSize: opts.BatchSize,
+		}
+		if opts.FullDocument == "updateLookup" {
+			req.Options.FullDocument = pb.FullDocument_UPDATE_LOOKUP
+		} else if opts.FullDocument == "whenAvailable" {
+			req.Options.FullDocument = pb.FullDocument_WHEN_AVAILABLE
+		} else if opts.FullDocument == "required" {
+			req.Options.FullDocument = pb.FullDocument_REQUIRED
+		}
+	}
+
+	stream, err := c.database.client.rpc.Watch(c.database.client.authContext(ctx), req)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *ChangeEvent)
+	go func() {
+		defer close(ch)
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if resp.Event != nil {
+				ch <- fromProtoChangeEvent(resp.Event)
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
 // Query returns a fluent query builder.
 func (c *Collection) Query() *QueryBuilder {
 	return newQueryBuilder(c)
