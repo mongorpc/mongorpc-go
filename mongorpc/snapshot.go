@@ -197,7 +197,7 @@ func (c *Collection) OnQuerySnapshot(ctx context.Context, filter Filter, callbac
 	initialFetchDone := false
 
 	// Start watching the entire collection (broad watch)
-	eventChan, err := c.Watch(watchCtx, nil) // No pipeline filter
+	eventChan, err := c.Watch(watchCtx, nil, ChangeStreamOptions{FullDocument: "updateLookup"}) // No pipeline filter
 	if err != nil {
 		callback(nil, err)
 		return err
