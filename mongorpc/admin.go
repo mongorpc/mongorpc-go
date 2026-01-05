@@ -347,3 +347,80 @@ func (c *AdminCollection) DropIndex(ctx context.Context, indexName string) error
 	})
 	return err
 }
+
+// CollectionInfo contains information about a collection.
+type CollectionInfo struct {
+	Name string
+	Type string
+}
+
+// CollectionOptions configures collection creation.
+type CollectionOptions struct {
+	Capped           bool
+	Size             int64  // Max size in bytes for capped collections
+	Max              int64  // Max document count for capped collections
+	ValidationLevel  string // "off", "strict", "moderate"
+	ValidationAction string // "error", "warn"
+}
+
+// ListCollections lists all collections in the database.
+func (d *AdminDatabase) ListCollections(ctx context.Context) ([]CollectionInfo, error) {
+	resp, err := d.client.rpc.ListCollections(d.client.adminContext(ctx), &pb.ListCollectionsRequest{
+		Database:      d.name,
+		IncludeSystem: false,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	collections := make([]CollectionInfo, len(resp.Collections))
+	for i, c := range resp.Collections {
+		collections[i] = CollectionInfo{
+			Name: c.Name,
+			Type: c.Type,
+		}
+	}
+
+	return collections, nil
+}
+
+// CreateCollection creates a new collection.
+func (d *AdminDatabase) CreateCollection(ctx context.Context, name string, opts *CollectionOptions) error {
+	req := &pb.CreateCollectionRequest{
+		Database:   d.name,
+		Collection: name,
+	}
+
+	if opts != nil {
+		req.Options = &pb.CollectionOptions{
+			Capped:           opts.Capped,
+			Size:             opts.Size,
+			Max:              opts.Max,
+			ValidationLevel:  opts.ValidationLevel,
+			ValidationAction: opts.ValidationAction,
+		}
+	}
+
+	_, err := d.client.rpc.CreateCollection(d.client.adminContext(ctx), req)
+	return err
+}
+
+// DropCollection drops a collection.
+func (d *AdminDatabase) DropCollection(ctx context.Context, name string) error {
+	_, err := d.client.rpc.DropCollection(d.client.adminContext(ctx), &pb.DropCollectionRequest{
+		Database:   d.name,
+		Collection: name,
+	})
+	return err
+}
+
+// RenameCollection renames a collection.
+func (d *AdminDatabase) RenameCollection(ctx context.Context, oldName, newName string, dropTarget bool) error {
+	_, err := d.client.rpc.RenameCollection(d.client.adminContext(ctx), &pb.RenameCollectionRequest{
+		Database:   d.name,
+		Collection: oldName,
+		NewName:    newName,
+		DropTarget: dropTarget,
+	})
+	return err
+}
