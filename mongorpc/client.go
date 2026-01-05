@@ -1,21 +1,10 @@
-// Package mongorpc provides a Go client for MongoRPC servers.
-//
-// Example usage:
-//
-//	client, err := mongorpc.NewClient("localhost:50051")
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//	defer client.Close()
-//
-//	users := client.Database("mydb").Collection("users")
-//	doc, err := users.FindByID(ctx, "user-id")
 package mongorpc
 
 import (
 	"context"
 	"time"
 
+	pb "github.com/mongorpc/mongorpc-go/gen/mongorpc/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -26,6 +15,7 @@ type Client struct {
 	conn    *grpc.ClientConn
 	address string
 	options *ClientOptions
+	rpc     pb.MongoRPCClient
 }
 
 // ClientOptions configures the client.
@@ -65,6 +55,7 @@ func NewClient(address string, opts ...ClientOption) (*Client, error) {
 		conn:    conn,
 		address: address,
 		options: options,
+		rpc:     pb.NewMongoRPCClient(conn),
 	}, nil
 }
 
