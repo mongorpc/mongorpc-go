@@ -228,3 +228,122 @@ func (c *AdminCollection) CountDocuments(ctx context.Context, filter Filter) (in
 
 	return resp.Count, nil
 }
+
+// IndexInfo contains information about an index.
+type IndexInfo struct {
+	Name               string
+	Keys               []IndexKey
+	Unique             bool
+	Sparse             bool
+	ExpireAfterSeconds int64
+}
+
+// IndexKey represents an index key specification.
+type IndexKey struct {
+	Field     string
+	Direction int    // 1 = ascending, -1 = descending
+	Type      string // "text", "2dsphere", "hashed", etc.
+}
+
+// IndexOptions configures index creation.
+type IndexOptions struct {
+	Name               string
+	Unique             bool
+	Sparse             bool
+	ExpireAfterSeconds int64
+	Hidden             bool
+}
+
+// ListIndexes lists all indexes on the collection.
+func (c *AdminCollection) ListIndexes(ctx context.Context) ([]IndexInfo, error) {
+	resp, err := c.rpc().ListIndexes(c.ctx(ctx), &pb.ListIndexesRequest{
+		Database:   c.database.name,
+		Collection: c.name,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	indexes := make([]IndexInfo, len(resp.Indexes))
+	for i, idx := range resp.Indexes {
+		info := IndexInfo{
+			Name:               idx.Name,
+			Unique:             idx.Unique,
+			Sparse:             idx.Sparse,
+			ExpireAfterSeconds: idx.ExpireAfterSeconds,
+		}
+
+		for _, k := range idx.Keys {
+			key := IndexKey{Field: k.Field}
+			switch kt := k.KeyType.(type) {
+			case *pb.IndexKey_Direction:
+				if kt.Direction == pb.SortDirection_ASCENDING {
+					key.Direction = 1
+				} else {
+					key.Direction = -1
+				}
+			case *pb.IndexKey_Type:
+				key.Type = kt.Type
+			}
+			info.Keys = append(info.Keys, key)
+		}
+
+		indexes[i] = info
+	}
+
+	return indexes, nil
+}
+
+// CreateIndex creates an index on the collection.
+func (c *AdminCollection) CreateIndex(ctx context.Context, keys Document, opts *IndexOptions) (string, error) {
+	// Build proto keys
+	var protoKeys []*pb.IndexKey
+	for field, direction := range keys {
+		key := &pb.IndexKey{Field: field}
+		switch v := direction.(type) {
+		case int:
+			if v == 1 {
+				key.KeyType = &pb.IndexKey_Direction{Direction: pb.SortDirection_ASCENDING}
+			} else {
+				key.KeyType = &pb.IndexKey_Direction{Direction: pb.SortDirection_DESCENDING}
+			}
+		case string:
+			key.KeyType = &pb.IndexKey_Type{Type: v}
+		}
+		protoKeys = append(protoKeys, key)
+	}
+
+	// Build proto options
+	var protoOpts *pb.IndexOptions
+	if opts != nil {
+		protoOpts = &pb.IndexOptions{
+			Name:               opts.Name,
+			Unique:             opts.Unique,
+			Sparse:             opts.Sparse,
+			ExpireAfterSeconds: opts.ExpireAfterSeconds,
+			Hidden:             opts.Hidden,
+		}
+	}
+
+	resp, err := c.rpc().CreateIndex(c.ctx(ctx), &pb.CreateIndexRequest{
+		Database:   c.database.name,
+		Collection: c.name,
+		Keys:       protoKeys,
+		Options:    protoOpts,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return resp.IndexName, nil
+}
+
+// DropIndex removes an index from the collection.
+func (c *AdminCollection) DropIndex(ctx context.Context, indexName string) error {
+	_, err := c.rpc().DropIndex(c.ctx(ctx), &pb.DropIndexRequest{
+		Database:   c.database.name,
+		Collection: c.name,
+		IndexName:  indexName,
+	})
+	return err
+}
